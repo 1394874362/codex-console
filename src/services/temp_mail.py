@@ -1,75 +1,83 @@
 """
-Temp-Mail 邮箱服务实现
-基于自部署 Cloudflare Worker 临时邮箱服务
-接口文档参见 plan/temp-mail.md
+Temp-Mail 邮箱服务实现。
+
+兼容两类常见的 Cloudflare 临时邮箱接口：
+
+1. 传统 admin 模式
+   - POST /admin/new_address
+   - GET  /admin/mails
+   - Header: x-admin-auth
+
+2. DreamHunter cloudflare_temp_email v1.x
+   - GET  /open_api/settings
+   - POST /api/new_address
+   - GET  /api/mails
+   - Header: Authorization: Bearer <jwt>
+
+当前实现会在 `api_mode=auto` 时自动探测：
+若 /open_api/settings 可用，则走 DreamHunter 模式；否则回退到 admin 模式。
 """
 
-import re
-import time
 import json
 import logging
+import random
+import re
+import string
+import time
 from email import message_from_string
 from email.header import decode_header, make_header
 from email.message import Message
 from email.policy import default as email_policy
 from html import unescape
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
 
 from .base import BaseEmailService, EmailServiceError, EmailServiceType
-from ..core.http_client import HTTPClient, RequestConfig
 from ..config.constants import OTP_CODE_PATTERN
+from ..core.http_client import HTTPClient, RequestConfig
 
 
 logger = logging.getLogger(__name__)
 
 
 class TempMailService(BaseEmailService):
-    """
-    Temp-Mail 邮箱服务
-    基于自部署 Cloudflare Worker 的临时邮箱，admin 模式管理邮箱
-    不走代理，不使用 requests 库
-    """
+    """自部署 Cloudflare 临时邮箱服务。"""
 
     def __init__(self, config: Dict[str, Any] = None, name: str = None):
-        """
-        初始化 TempMail 服务
-
-        Args:
-            config: 配置字典，支持以下键:
-                - base_url: Worker 域名地址，如 https://mail.example.com (必需)
-                - admin_password: Admin 密码，对应 x-admin-auth header (必需)
-                - domain: 邮箱域名，如 example.com (必需)
-                - enable_prefix: 是否启用前缀，默认 True
-                - timeout: 请求超时时间，默认 30
-                - max_retries: 最大重试次数，默认 3
-            name: 服务名称
-        """
         super().__init__(EmailServiceType.TEMP_MAIL, name)
 
-        required_keys = ["base_url", "admin_password", "domain"]
-        missing_keys = [key for key in required_keys if not (config or {}).get(key)]
-        if missing_keys:
-            raise ValueError(f"缺少必需配置: {missing_keys}")
+        cfg = config or {}
+        if not cfg.get("base_url"):
+            raise ValueError("缺少必需配置: ['base_url']")
 
         default_config = {
             "enable_prefix": True,
             "timeout": 30,
             "max_retries": 3,
+            "api_mode": "auto",  # auto / admin / dreamhunter
+            "lang": "zh",
+            "fingerprint": "codex-console",
         }
-        self.config = {**default_config, **(config or {})}
+        self.config = {**default_config, **cfg}
+        self.config["base_url"] = str(self.config["base_url"]).rstrip("/")
 
-        # 不走代理，proxy_url=None
-        http_config = RequestConfig(
-            timeout=self.config["timeout"],
-            max_retries=self.config["max_retries"],
+        self.http_client = HTTPClient(
+            proxy_url=None,
+            config=RequestConfig(
+                timeout=self.config["timeout"],
+                max_retries=self.config["max_retries"],
+            ),
         )
-        self.http_client = HTTPClient(proxy_url=None, config=http_config)
 
-        # 邮箱缓存：email -> {jwt, address}
+        # email -> info(jwt, address, ...)
         self._email_cache: Dict[str, Dict[str, Any]] = {}
+        self._api_mode_cache: Optional[str] = None
+        self._open_settings_cache: Optional[Dict[str, Any]] = None
+
+    # ---------------------------
+    # common helpers
+    # ---------------------------
 
     def _decode_mime_header(self, value: str) -> str:
-        """解码 MIME 头，兼容 RFC 2047 编码主题。"""
         if not value:
             return ""
         try:
@@ -78,7 +86,6 @@ class TempMailService(BaseEmailService):
             return value
 
     def _extract_body_from_message(self, message: Message) -> str:
-        """从 MIME 邮件对象中提取可读正文。"""
         parts: List[str] = []
 
         if message.is_multipart():
@@ -121,7 +128,6 @@ class TempMailService(BaseEmailService):
         return unescape("\n".join(part for part in parts if part).strip())
 
     def _extract_mail_fields(self, mail: Dict[str, Any]) -> Dict[str, str]:
-        """统一提取邮件字段，兼容 raw MIME 和不同 Worker 返回格式。"""
         sender = str(
             mail.get("source")
             or mail.get("from")
@@ -160,38 +166,70 @@ class TempMailService(BaseEmailService):
         }
 
     def _admin_headers(self) -> Dict[str, str]:
-        """构造 admin 请求头"""
-        return {
-            "x-admin-auth": self.config["admin_password"],
+        headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        admin_password = str(self.config.get("admin_password") or "").strip()
+        if admin_password:
+            headers["x-admin-auth"] = admin_password
+        return headers
 
-    def _make_request(self, method: str, path: str, **kwargs) -> Any:
-        """
-        发送请求并返回 JSON 数据
+    def _dreamhunter_headers(self, jwt: Optional[str] = None) -> Dict[str, str]:
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "x-lang": self.config.get("lang", "zh"),
+            "x-fingerprint": self.config.get("fingerprint", "codex-console"),
+        }
 
-        Args:
-            method: HTTP 方法
-            path: 请求路径（以 / 开头）
-            **kwargs: 传递给 http_client.request 的额外参数
+        custom_auth = str(
+            self.config.get("x_custom_auth")
+            or self.config.get("custom_auth")
+            or self.config.get("auth")
+            or ""
+        ).strip()
+        if custom_auth:
+            headers["x-custom-auth"] = custom_auth
 
-        Returns:
-            响应 JSON 数据
+        admin_password = str(self.config.get("admin_password") or "").strip()
+        if admin_password:
+            headers["x-admin-auth"] = admin_password
 
-        Raises:
-            EmailServiceError: 请求失败
-        """
-        base_url = self.config["base_url"].rstrip("/")
-        url = f"{base_url}{path}"
+        if jwt:
+            headers["Authorization"] = f"Bearer {jwt}"
 
-        # 合并默认 admin headers
+        return headers
+
+    def _make_raw_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        default_headers: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ):
+        url = f"{self.config['base_url']}{path}"
         kwargs.setdefault("headers", {})
-        for k, v in self._admin_headers().items():
+        for k, v in (default_headers or {}).items():
             kwargs["headers"].setdefault(k, v)
+        return self.http_client.request(method, url, **kwargs)
 
+    def _make_json_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        default_headers: Optional[Dict[str, str]] = None,
+        **kwargs,
+    ) -> Any:
         try:
-            response = self.http_client.request(method, url, **kwargs)
+            response = self._make_raw_request(
+                method,
+                path,
+                default_headers=default_headers,
+                **kwargs,
+            )
 
             if response.status_code >= 400:
                 error_msg = f"请求失败: {response.status_code}"
@@ -214,39 +252,115 @@ class TempMailService(BaseEmailService):
                 raise
             raise EmailServiceError(f"请求失败: {method} {path} - {e}")
 
-    def create_email(self, config: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        通过 admin API 创建临时邮箱
+    def _make_request(self, method: str, path: str, **kwargs) -> Any:
+        return self._make_json_request(
+            method,
+            path,
+            default_headers=self._admin_headers(),
+            **kwargs,
+        )
 
-        Returns:
-            包含邮箱信息的字典:
-            - email: 邮箱地址
-            - jwt: 用户级 JWT token
-            - service_id: 同 email（用作标识）
-        """
-        import random
-        import string
+    # ---------------------------
+    # mode detect / settings
+    # ---------------------------
 
-        # 生成随机邮箱名
-        letters = ''.join(random.choices(string.ascii_lowercase, k=5))
-        digits = ''.join(random.choices(string.digits, k=random.randint(1, 3)))
-        suffix = ''.join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
-        name = letters + digits + suffix
+    def _get_api_mode(self) -> str:
+        if self._api_mode_cache:
+            return self._api_mode_cache
 
-        domain = self.config["domain"]
-        enable_prefix = self.config.get("enable_prefix", True)
-
-        body = {
-            "enablePrefix": enable_prefix,
-            "name": name,
-            "domain": domain,
-        }
+        configured = str(self.config.get("api_mode") or "auto").strip().lower()
+        if configured in {"admin", "dreamhunter"}:
+            self._api_mode_cache = configured
+            return configured
 
         try:
-            response = self._make_request("POST", "/admin/new_address", json=body)
+            response = self._make_raw_request(
+                "GET",
+                "/open_api/settings",
+                default_headers=self._dreamhunter_headers(),
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict) and isinstance(data.get("domains"), list):
+                    self._open_settings_cache = data
+                    self._api_mode_cache = "dreamhunter"
+                    return self._api_mode_cache
+        except Exception as e:
+            logger.debug(f"自动探测 DreamHunter API 失败: {e}")
 
-            address = response.get("address", "").strip()
-            jwt = response.get("jwt", "").strip()
+        self._api_mode_cache = "admin"
+        return self._api_mode_cache
+
+    def _get_open_settings(self) -> Dict[str, Any]:
+        if self._open_settings_cache:
+            return self._open_settings_cache
+
+        data = self._make_json_request(
+            "GET",
+            "/open_api/settings",
+            default_headers=self._dreamhunter_headers(),
+        )
+        if not isinstance(data, dict):
+            raise EmailServiceError(f"open_api/settings 返回数据格式错误: {data}")
+        self._open_settings_cache = data
+        return data
+
+    def _resolve_domain(self, config: Optional[Dict[str, Any]] = None) -> str:
+        override = str((config or {}).get("domain") or "").strip()
+        if override:
+            return override
+
+        domain = str(self.config.get("domain") or "").strip()
+        if domain:
+            return domain
+
+        if self._get_api_mode() != "dreamhunter":
+            raise ValueError("缺少必需配置: ['domain']")
+
+        settings = self._get_open_settings()
+        domains = settings.get("defaultDomains") or settings.get("domains") or []
+        if not domains:
+            raise EmailServiceError("DreamHunter open_api/settings 未返回可用域名")
+        return str(domains[0]).strip()
+
+    # ---------------------------
+    # service api
+    # ---------------------------
+
+    def create_email(self, config: Dict[str, Any] = None) -> Dict[str, Any]:
+        letters = "".join(random.choices(string.ascii_lowercase, k=5))
+        digits = "".join(random.choices(string.digits, k=random.randint(1, 3)))
+        suffix = "".join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
+        name = letters + digits + suffix
+
+        domain = self._resolve_domain(config)
+        enable_prefix = self.config.get("enable_prefix", True)
+
+        try:
+            if self._get_api_mode() == "dreamhunter":
+                response = self._make_json_request(
+                    "POST",
+                    "/api/new_address",
+                    json={
+                        "name": name,
+                        "domain": domain,
+                        "cf_token": "",
+                    },
+                    default_headers=self._dreamhunter_headers(),
+                )
+            else:
+                response = self._make_request(
+                    "POST",
+                    "/admin/new_address",
+                    json={
+                        "enablePrefix": enable_prefix,
+                        "name": name,
+                        "domain": domain,
+                    },
+                )
+
+            address = str(response.get("address") or response.get("email") or "").strip()
+            jwt = str(response.get("jwt") or response.get("token") or "").strip()
 
             if not address:
                 raise EmailServiceError(f"API 返回数据不完整: {response}")
@@ -254,14 +368,14 @@ class TempMailService(BaseEmailService):
             email_info = {
                 "email": address,
                 "jwt": jwt,
+                "password": response.get("password"),
                 "service_id": address,
                 "id": address,
                 "created_at": time.time(),
+                "domain": domain,
             }
 
-            # 缓存 jwt，供获取验证码时使用
             self._email_cache[address] = email_info
-
             logger.info(f"成功创建 TempMail 邮箱: {address}")
             self.update_status(True)
             return email_info
@@ -280,36 +394,36 @@ class TempMailService(BaseEmailService):
         pattern: str = OTP_CODE_PATTERN,
         otp_sent_at: Optional[float] = None,
     ) -> Optional[str]:
-        """
-        从 TempMail 邮箱获取验证码
-
-        Args:
-            email: 邮箱地址
-            email_id: 未使用，保留接口兼容
-            timeout: 超时时间（秒）
-            pattern: 验证码正则
-            otp_sent_at: OTP 发送时间戳（暂未使用）
-
-        Returns:
-            验证码字符串，超时返回 None
-        """
         logger.info(f"正在从 TempMail 邮箱 {email} 获取验证码...")
 
         start_time = time.time()
         seen_mail_ids: set = set()
-
-        # 优先使用用户级 JWT，回退到 admin API
         cached = self._email_cache.get(email, {})
         jwt = cached.get("jwt")
+        api_mode = self._get_api_mode()
 
         while time.time() - start_time < timeout:
             try:
-                if jwt:
+                if api_mode == "dreamhunter":
+                    if not jwt:
+                        logger.warning(f"DreamHunter TempMail 缓存中缺少 JWT，无法查询 {email}")
+                        return None
+                    response = self._make_json_request(
+                        "GET",
+                        "/api/mails",
+                        params={"limit": 20, "offset": 0},
+                        default_headers=self._dreamhunter_headers(jwt=jwt),
+                    )
+                elif jwt:
                     response = self._make_request(
                         "GET",
                         "/user_api/mails",
                         params={"limit": 20, "offset": 0},
-                        headers={"x-user-token": jwt, "Content-Type": "application/json", "Accept": "application/json"},
+                        headers={
+                            "x-user-token": jwt,
+                            "Content-Type": "application/json",
+                            "Accept": "application/json",
+                        },
                     )
                 else:
                     response = self._make_request(
@@ -318,7 +432,6 @@ class TempMailService(BaseEmailService):
                         params={"limit": 20, "offset": 0, "address": email},
                     )
 
-                # /user_api/mails 和 /admin/mails 返回格式相同: {"results": [...], "total": N}
                 mails = response.get("results", [])
                 if not isinstance(mails, list):
                     time.sleep(3)
@@ -338,7 +451,6 @@ class TempMailService(BaseEmailService):
                     raw_text = parsed["raw"]
                     content = f"{sender}\n{subject}\n{body_text}\n{raw_text}".strip()
 
-                    # 只处理 OpenAI 邮件
                     if "openai" not in sender and "openai" not in content.lower():
                         continue
 
@@ -358,17 +470,10 @@ class TempMailService(BaseEmailService):
         return None
 
     def list_emails(self, limit: int = 100, offset: int = 0, **kwargs) -> List[Dict[str, Any]]:
-        """
-        列出邮箱
+        if self._get_api_mode() == "dreamhunter":
+            self.update_status(True)
+            return list(self._email_cache.values())
 
-        Args:
-            limit: 返回数量上限
-            offset: 分页偏移
-            **kwargs: 额外查询参数，透传给 admin API
-
-        Returns:
-            邮箱列表
-        """
         params = {
             "limit": limit,
             "offset": offset,
@@ -408,13 +513,6 @@ class TempMailService(BaseEmailService):
             return list(self._email_cache.values())
 
     def delete_email(self, email_id: str) -> bool:
-        """
-        删除邮箱
-
-        Note:
-            当前 TempMail admin API 文档未见删除地址接口，这里先从本地缓存移除，
-            以满足统一接口并避免服务实例化失败。
-        """
         removed = False
         emails_to_delete = []
 
@@ -440,13 +538,15 @@ class TempMailService(BaseEmailService):
         return removed
 
     def check_health(self) -> bool:
-        """检查服务健康状态"""
         try:
-            self._make_request(
-                "GET",
-                "/admin/mails",
-                params={"limit": 1, "offset": 0},
-            )
+            if self._get_api_mode() == "dreamhunter":
+                self._get_open_settings()
+            else:
+                self._make_request(
+                    "GET",
+                    "/admin/mails",
+                    params={"limit": 1, "offset": 0},
+                )
             self.update_status(True)
             return True
         except Exception as e:

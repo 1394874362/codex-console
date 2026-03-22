@@ -170,83 +170,83 @@ async def get_email_services_stats():
 
 @router.get("/types")
 async def get_service_types():
-    """获取支持的邮箱服务类型"""
+    """????????????"""
     return {
         "types": [
             {
                 "value": "tempmail",
                 "label": "Tempmail.lol",
-                "description": "临时邮箱服务，无需配置",
+                "description": "???????????????",
                 "config_fields": [
-                    {"name": "base_url", "label": "API 地址", "default": "https://api.tempmail.lol/v2", "required": False},
-                    {"name": "timeout", "label": "超时时间", "default": 30, "required": False},
-                ]
+                    {"name": "base_url", "label": "API ??", "default": "https://api.tempmail.lol/v2", "required": False},
+                    {"name": "timeout", "label": "????", "default": 30, "required": False},
+                ],
             },
             {
                 "value": "outlook",
                 "label": "Outlook",
-                "description": "Outlook 邮箱，需要配置账户信息",
+                "description": "Outlook ???????????",
                 "config_fields": [
-                    {"name": "email", "label": "邮箱地址", "required": True},
-                    {"name": "password", "label": "密码", "required": True},
+                    {"name": "email", "label": "????", "required": True},
+                    {"name": "password", "label": "??", "required": True},
                     {"name": "client_id", "label": "OAuth Client ID", "required": False},
                     {"name": "refresh_token", "label": "OAuth Refresh Token", "required": False},
-                ]
+                ],
             },
             {
                 "value": "moe_mail",
                 "label": "MoeMail",
-                "description": "自定义域名邮箱服务",
+                "description": "?????????",
                 "config_fields": [
-                    {"name": "base_url", "label": "API 地址", "required": True},
+                    {"name": "base_url", "label": "API ??", "required": True},
                     {"name": "api_key", "label": "API Key", "required": True},
-                    {"name": "default_domain", "label": "默认域名", "required": False},
-                ]
+                    {"name": "default_domain", "label": "????", "required": False},
+                ],
             },
             {
                 "value": "temp_mail",
-                "label": "Temp-Mail（自部署）",
-                "description": "自部署 Cloudflare Worker 临时邮箱，admin 模式管理",
+                "label": "Temp-Mail?????",
+                "description": "?? admin ??? DreamHunter Cloudflare Temp Email v1.x",
                 "config_fields": [
-                    {"name": "base_url", "label": "Worker 地址", "required": True, "placeholder": "https://mail.example.com"},
-                    {"name": "admin_password", "label": "Admin 密码", "required": True, "secret": True},
-                    {"name": "domain", "label": "邮箱域名", "required": True, "placeholder": "example.com"},
-                    {"name": "enable_prefix", "label": "启用前缀", "required": False, "default": True},
-                ]
+                    {"name": "base_url", "label": "API ??", "required": True, "placeholder": "https://apimail.example.com"},
+                    {"name": "admin_password", "label": "Admin ??", "required": False, "secret": True},
+                    {"name": "domain", "label": "????", "required": False, "placeholder": "example.com / sssid.indevs.in"},
+                    {"name": "enable_prefix", "label": "????", "required": False, "default": True},
+                ],
             },
             {
                 "value": "duck_mail",
                 "label": "DuckMail",
-                "description": "DuckMail 接口邮箱服务，支持 API Key 私有域名访问",
+                "description": "DuckMail ????????? API Key ??????",
                 "config_fields": [
-                    {"name": "base_url", "label": "API 地址", "required": True, "placeholder": "https://api.duckmail.sbs"},
-                    {"name": "default_domain", "label": "默认域名", "required": True, "placeholder": "duckmail.sbs"},
+                    {"name": "base_url", "label": "API ??", "required": True, "placeholder": "https://api.duckmail.sbs"},
+                    {"name": "default_domain", "label": "????", "required": True, "placeholder": "duckmail.sbs"},
                     {"name": "api_key", "label": "API Key", "required": False, "secret": True},
-                    {"name": "password_length", "label": "随机密码长度", "required": False, "default": 12},
-                ]
+                    {"name": "password_length", "label": "??????", "required": False, "default": 12},
+                ],
             },
             {
                 "value": "freemail",
                 "label": "Freemail",
-                "description": "Freemail 自部署 Cloudflare Worker 临时邮箱服务",
+                "description": "Freemail ??? Cloudflare Worker ??????",
                 "config_fields": [
-                    {"name": "base_url", "label": "API 地址", "required": True, "placeholder": "https://freemail.example.com"},
+                    {"name": "base_url", "label": "API ??", "required": True, "placeholder": "https://freemail.example.com"},
                     {"name": "admin_token", "label": "Admin Token", "required": True, "secret": True},
-                    {"name": "domain", "label": "邮箱域名", "required": False, "placeholder": "example.com"},
-                ]
+                    {"name": "domain", "label": "????", "required": False, "placeholder": "example.com"},
+                ],
             },
             {
                 "value": "imap_mail",
-                "label": "IMAP 邮箱",
-                "description": "标准 IMAP 协议邮箱（Gmail/QQ/163等），仅用于接收验证码，强制直连",
+                "label": "IMAP ??",
+                "description": "?? IMAP ?????Gmail/QQ/163 ???????????",
                 "config_fields": [
-                    {"name": "host", "label": "IMAP 服务器", "required": True, "placeholder": "imap.gmail.com"},
-                    {"name": "port", "label": "端口", "required": False, "default": 993},
-                    {"name": "use_ssl", "label": "使用 SSL", "required": False, "default": True},
-                    {"name": "email", "label": "邮箱地址", "required": True},
-                    {"name": "password", "label": "密码/授权码", "required": True, "secret": True},
-                ]
-            }
+                    {"name": "host", "label": "IMAP ???", "required": True, "placeholder": "imap.gmail.com"},
+                    {"name": "port", "label": "??", "required": False, "default": 993},
+                    {"name": "use_ssl", "label": "?? SSL", "required": False, "default": True},
+                    {"name": "email", "label": "????", "required": True},
+                    {"name": "password", "label": "??/???", "required": True, "secret": True},
+                ],
+            },
         ]
     }
 
