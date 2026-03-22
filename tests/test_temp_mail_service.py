@@ -155,3 +155,64 @@ def test_dreamhunter_get_verification_code_skips_old_code_after_otp_sent_at():
     )
 
     assert code == "222222"
+
+
+def test_dreamhunter_create_email_randomly_selects_from_configured_domains():
+    service = TempMailService({
+        "base_url": "https://apimail.example.com",
+        "api_mode": "dreamhunter",
+        "domain": "mail-a.example.com, mail-b.example.com",
+    })
+    fake_client = FakeHTTPClient([
+        FakeResponse(
+            payload={
+                "address": "tester@mail-b.example.com",
+                "jwt": "jwt-123",
+            }
+        ),
+    ])
+    service.http_client = fake_client
+
+    original_choice = __import__("random").choice
+    __import__("random").choice = lambda seq: seq[-1]
+    try:
+        email_info = service.create_email()
+    finally:
+        __import__("random").choice = original_choice
+
+    assert email_info["domain"] == "mail-b.example.com"
+    create_call = fake_client.calls[0]
+    assert create_call["kwargs"]["json"]["domain"] == "mail-b.example.com"
+
+
+def test_dreamhunter_create_email_randomly_selects_from_open_settings_domains():
+    service = TempMailService({
+        "base_url": "https://apimail.example.com",
+        "api_mode": "auto",
+    })
+    fake_client = FakeHTTPClient([
+        FakeResponse(
+            payload={
+                "domains": ["mail-a.example.com", "mail-b.example.com"],
+                "defaultDomains": ["mail-a.example.com", "mail-b.example.com"],
+            }
+        ),
+        FakeResponse(
+            payload={
+                "address": "tester@mail-b.example.com",
+                "jwt": "jwt-123",
+            }
+        ),
+    ])
+    service.http_client = fake_client
+
+    original_choice = __import__("random").choice
+    __import__("random").choice = lambda seq: seq[-1]
+    try:
+        email_info = service.create_email()
+    finally:
+        __import__("random").choice = original_choice
+
+    assert email_info["domain"] == "mail-b.example.com"
+    create_call = fake_client.calls[1]
+    assert create_call["kwargs"]["json"]["domain"] == "mail-b.example.com"

@@ -333,27 +333,52 @@ class TempMailService(BaseEmailService):
             default_headers=self._dreamhunter_headers(),
         )
         if not isinstance(data, dict):
-            raise EmailServiceError(f"open_api/settings 返回数据格式错误: {data}")
+            raise EmailServiceError(f"open_api/settings returned invalid data: {data}")
         self._open_settings_cache = data
         return data
 
-    def _resolve_domain(self, config: Optional[Dict[str, Any]] = None) -> str:
-        override = str((config or {}).get("domain") or "").strip()
-        if override:
-            return override
+    def _extract_domains(self, value: Any) -> List[str]:
+        if value is None:
+            return []
 
-        domain = str(self.config.get("domain") or "").strip()
-        if domain:
-            return domain
+        if isinstance(value, (list, tuple, set)):
+            parts = value
+        else:
+            parts = re.split(r"[\r\n,;|]+", str(value))
+
+        domains: List[str] = []
+        seen = set()
+        for part in parts:
+            domain = str(part or "").strip()
+            if not domain or domain in seen:
+                continue
+            seen.add(domain)
+            domains.append(domain)
+        return domains
+
+    def _resolve_domain(self, config: Optional[Dict[str, Any]] = None) -> str:
+        override_domains = self._extract_domains((config or {}).get("domain"))
+        if override_domains:
+            selected = random.choice(override_domains)
+            logger.info(f"TempMail selected override domain: {selected}")
+            return selected
+
+        configured_domains = self._extract_domains(self.config.get("domain"))
+        if configured_domains:
+            selected = random.choice(configured_domains)
+            logger.info(f"TempMail selected configured domain: {selected}")
+            return selected
 
         if self._get_api_mode() != "dreamhunter":
-            raise ValueError("缺少必需配置: ['domain']")
+            raise ValueError("missing required config: ['domain']")
 
         settings = self._get_open_settings()
-        domains = settings.get("defaultDomains") or settings.get("domains") or []
+        domains = self._extract_domains(settings.get("defaultDomains")) or self._extract_domains(settings.get("domains"))
         if not domains:
-            raise EmailServiceError("DreamHunter open_api/settings 未返回可用域名")
-        return str(domains[0]).strip()
+            raise EmailServiceError("DreamHunter open_api/settings returned no available domains")
+        selected = random.choice(domains)
+        logger.info(f"TempMail selected open_api/settings domain: {selected}")
+        return selected
 
     # ---------------------------
     # service api

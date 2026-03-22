@@ -234,7 +234,7 @@
                         <div class="form-group">
                             <label for="custom-tm-base-url">Worker 地址</label>
                             <input type="text" id="custom-tm-base-url" name="tm_base_url" placeholder="https://apimail.example.com">
-                            <small style="color: var(--text-muted);">DreamHunter / Cloudflare Temp Email ?? API ???????????? https://apimail.xigege.me</small>
+                            <small style="color: var(--text-muted);">DreamHunter / Cloudflare Temp Email: use the API base URL, e.g. https://apimail.xigege.me</small>
                         </div>
                         <div class="form-group">
                             <label for="custom-tm-admin-password">Admin 密码</label>
@@ -242,8 +242,9 @@
                         </div>
                         <div class="form-group">
                             <label for="custom-tm-domain">邮箱域名</label>
-                            <input type="text" id="custom-tm-domain" name="tm_domain" placeholder="example.com ? sssid.indevs.in">
-                            <small style="color: var(--text-muted);">?????? API ???? /open_api/settings ??????</small>
+                            <input type="text" id="custom-tm-domain" name="tm_domain" placeholder="example.com,foo.com,bar.com">
+                            <small style="color: var(--text-muted);">Multiple domains supported; separate with comma, newline, semicolon, or pipe</small>
+                            <small style="color: var(--text-muted);">Leave blank to auto-load domains from /open_api/settings</small>
                         </div>
                     </div>
                     <!-- DuckMail 字段 -->
@@ -371,7 +372,7 @@
                         <div class="form-group">
                             <label for="edit-tm-base-url">Worker 地址</label>
                             <input type="text" id="edit-tm-base-url" name="tm_base_url" placeholder="https://apimail.example.com">
-                            <small style="color: var(--text-muted);">DreamHunter / Cloudflare Temp Email ?? API ?????????</small>
+                            <small style="color: var(--text-muted);">DreamHunter / Cloudflare Temp Email: use the API base URL</small>
                         </div>
                         <div class="form-group">
                             <label for="edit-tm-admin-password">Admin 密码</label>
@@ -380,7 +381,8 @@
                         </div>
                         <div class="form-group">
                             <label for="edit-tm-domain">邮箱域名</label>
-                            <input type="text" id="edit-tm-domain" name="tm_domain" placeholder="example.com ? sssid.indevs.in">
+                            <input type="text" id="edit-tm-domain" name="tm_domain" placeholder="example.com,foo.com,bar.com">
+                            <small style="color: var(--text-muted);">Multiple domains supported; separate with comma, newline, semicolon, or pipe</small>
                         </div>
                     </div>
                     <!-- DuckMail 字段 -->

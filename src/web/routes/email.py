@@ -210,7 +210,7 @@ async def get_service_types():
                 "config_fields": [
                     {"name": "base_url", "label": "API ??", "required": True, "placeholder": "https://apimail.example.com"},
                     {"name": "admin_password", "label": "Admin ??", "required": False, "secret": True},
-                    {"name": "domain", "label": "????", "required": False, "placeholder": "example.com / sssid.indevs.in"},
+                    {"name": "domain", "label": "????", "required": False, "placeholder": "example.com,foo.com,bar.com"},
                     {"name": "enable_prefix", "label": "????", "required": False, "default": True},
                 ],
             },

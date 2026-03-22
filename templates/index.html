@@ -277,9 +277,10 @@
 
                                     <!-- CPA -->
                                     <label style="display: flex; align-items: center; gap: var(--spacing-sm); cursor: pointer;">
-                                        <input type="checkbox" id="auto-upload-cpa">
+                                        <input type="checkbox" id="auto-upload-cpa" checked>
                                         <span>上传到 CPA</span>
                                     </label>
+                                    <small style="display:block; color: var(--text-muted); margin: 4px 0 6px 26px;">Enabled by default; successful registrations will auto-sync to selected CPA services.</small>
                                     <div id="cpa-service-select-group" style="display:none; margin-top: 6px; margin-bottom: 8px; padding-left: 4px;">
                                         <div class="multi-select-dropdown" id="cpa-service-select"></div>
                                     </div>

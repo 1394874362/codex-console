@@ -157,6 +157,7 @@ async function loadServiceSelect(apiPath, container, checkbox, selectGroup) {
     }
 
     // 联动显示/隐藏服务选择区
+    if (selectGroup) selectGroup.style.display = checkbox.checked ? 'block' : 'none';
     checkbox.addEventListener('change', () => {
         if (selectGroup) selectGroup.style.display = checkbox.checked ? 'block' : 'none';
     });

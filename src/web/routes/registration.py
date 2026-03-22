@@ -417,34 +417,40 @@ def _run_sync_registration_task(task_uuid: str, email_service_type: str, proxy: 
                         from ...core.upload.cpa_upload import upload_to_cpa, generate_token_json
                         from ...database.models import Account as AccountModel
                         saved_account = db.query(AccountModel).filter_by(email=result.email).first()
-                        if saved_account and saved_account.access_token:
+                        if not saved_account:
+                            log_callback(f"[CPA] Saved account not found, skipping upload: {result.email}")
+                        elif not saved_account.access_token:
+                            log_callback(f"[CPA] Account missing access_token, cannot upload: {result.email}")
+                        else:
                             token_data = generate_token_json(saved_account)
                             _cpa_ids = cpa_service_ids or []
                             if not _cpa_ids:
-                                # 未指定则取所有启用的服务
+                                # ????????????
                                 _cpa_ids = [s.id for s in crud.get_cpa_services(db, enabled=True)]
                             if not _cpa_ids:
-                                log_callback("[CPA] 无可用 CPA 服务，跳过上传")
+                                log_callback("[CPA] No enabled CPA service, skipping upload")
                             for _sid in _cpa_ids:
                                 try:
                                     _svc = crud.get_cpa_service_by_id(db, _sid)
                                     if not _svc:
+                                        log_callback(f"[CPA] Service not found, skipping: {_sid}")
                                         continue
-                                    log_callback(f"[CPA] 正在把账号打包发往服务站: {_svc.name}")
+                                    log_callback(f"[CPA] Uploading account to service: {_svc.name}")
                                     _ok, _msg = upload_to_cpa(token_data, api_url=_svc.api_url, api_token=_svc.api_token)
                                     if _ok:
                                         saved_account.cpa_uploaded = True
                                         saved_account.cpa_uploaded_at = datetime.utcnow()
                                         db.commit()
-                                        log_callback(f"[CPA] 投递成功，服务站已签收: {_svc.name}")
+                                        log_callback(f"[CPA] Upload succeeded: {_svc.name}")
                                     else:
-                                        log_callback(f"[CPA] 上传失败({_svc.name}): {_msg}")
+                                        log_callback(f"[CPA] Upload failed ({_svc.name}): {_msg}")
                                 except Exception as _e:
-                                    log_callback(f"[CPA] 异常({_sid}): {_e}")
+                                    log_callback(f"[CPA] Exception ({_sid}): {_e}")
                     except Exception as cpa_err:
-                        log_callback(f"[CPA] 上传异常: {cpa_err}")
+                        log_callback(f"[CPA] Upload exception: {cpa_err}")
+                else:
+                    log_callback("[CPA] Auto upload not enabled, skipped")
 
-                # 自动上传到 Sub2API（可多服务）
                 if auto_upload_sub2api:
                     try:
                         from ...core.upload.sub2api_upload import upload_to_sub2api
