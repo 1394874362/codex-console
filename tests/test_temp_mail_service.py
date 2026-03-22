@@ -26,7 +26,7 @@ class FakeHTTPClient:
             "kwargs": kwargs,
         })
         if not self.responses:
-            raise AssertionError(f"未准备响应: {method} {url}")
+            raise AssertionError(f"no prepared response: {method} {url}")
         return self.responses.pop(0)
 
 
@@ -107,3 +107,51 @@ def test_dreamhunter_get_verification_code_reads_api_mails_with_bearer_token():
     assert mails_call["method"] == "GET"
     assert mails_call["url"] == "https://apimail.example.com/api/mails"
     assert mails_call["kwargs"]["headers"]["Authorization"] == "Bearer jwt-123"
+
+
+def test_dreamhunter_get_verification_code_skips_old_code_after_otp_sent_at():
+    service = TempMailService({
+        "base_url": "https://apimail.example.com",
+        "api_mode": "dreamhunter",
+        "domain": "mail.example.com",
+    })
+    fake_client = FakeHTTPClient([
+        FakeResponse(
+            payload={
+                "address": "tester@mail.example.com",
+                "jwt": "jwt-123",
+            }
+        ),
+        FakeResponse(
+            payload={
+                "results": [
+                    {
+                        "id": "old-msg",
+                        "from": "OpenAI <noreply@openai.com>",
+                        "subject": "Old code",
+                        "text": "Your OpenAI verification code is 111111",
+                        "createdAt": "2026-03-22T14:15:47Z",
+                    },
+                    {
+                        "id": "new-msg",
+                        "from": "OpenAI <noreply@openai.com>",
+                        "subject": "New code",
+                        "text": "Your OpenAI verification code is 222222",
+                        "createdAt": "2026-03-22T14:15:58Z",
+                    },
+                ],
+                "count": 2,
+            }
+        ),
+    ])
+    service.http_client = fake_client
+
+    email_info = service.create_email()
+    service._used_codes[email_info["email"]] = {"111111"}
+    code = service.get_verification_code(
+        email_info["email"],
+        timeout=1,
+        otp_sent_at=1774188957,
+    )
+
+    assert code == "222222"

@@ -24,6 +24,7 @@ import random
 import re
 import string
 import time
+from datetime import datetime, timezone
 from email import message_from_string
 from email.header import decode_header, make_header
 from email.message import Message
@@ -70,6 +71,7 @@ class TempMailService(BaseEmailService):
 
         # email -> info(jwt, address, ...)
         self._email_cache: Dict[str, Dict[str, Any]] = {}
+        self._used_codes: Dict[str, set] = {}
         self._api_mode_cache: Optional[str] = None
         self._open_settings_cache: Optional[Dict[str, Any]] = None
 
@@ -164,6 +166,36 @@ class TempMailService(BaseEmailService):
             "body": body_text,
             "raw": raw,
         }
+
+    def _parse_message_time(self, value: Any) -> Optional[float]:
+        """??????????????? Unix ????"""
+        if value is None or value == "":
+            return None
+
+        if isinstance(value, (int, float)):
+            ts = float(value)
+            if ts > 1e12:
+                ts /= 1000.0
+            return ts
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        if re.fullmatch(r"\d{10,13}", text):
+            ts = float(text)
+            if ts > 1e12:
+                ts /= 1000.0
+            return ts
+
+        try:
+            normalized = text.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except Exception:
+            return None
 
     def _admin_headers(self) -> Dict[str, str]:
         headers = {
@@ -398,6 +430,7 @@ class TempMailService(BaseEmailService):
 
         start_time = time.time()
         seen_mail_ids: set = set()
+        used_codes = self._used_codes.setdefault(email, set())
         cached = self._email_cache.get(email, {})
         jwt = cached.get("jwt")
         api_mode = self._get_api_mode()
@@ -440,6 +473,16 @@ class TempMailService(BaseEmailService):
                 for mail in mails:
                     mail_id = mail.get("id")
                     if not mail_id or mail_id in seen_mail_ids:
+                        continue
+
+                    created_at = self._parse_message_time(
+                        mail.get("createdAt")
+                        or mail.get("created_at")
+                        or mail.get("receivedAt")
+                        or mail.get("received_at")
+                        or mail.get("date")
+                    )
+                    if otp_sent_at and created_at and created_at + 1 < otp_sent_at:
                         continue
 
                     seen_mail_ids.add(mail_id)
